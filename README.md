@@ -21,8 +21,8 @@ public static class BasicDataModel
 public static class Cache
 {
     public static DataCache<BasicDataModel> Basic { get; } = new DataCache<BasicDataModel>(
-        p_Settings: BasicDataLoader.Settings,
-        p_LoadData: BasicDataLoader.LoadBasicData
+        settings: BasicDataLoader.Settings,
+        loadData: BasicDataLoader.LoadBasicData
     );
 }
 ```
