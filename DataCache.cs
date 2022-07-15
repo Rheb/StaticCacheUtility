@@ -5,7 +5,7 @@ namespace StaticCacheUtility;
 public class DataCache<TData>
     where TData : class, new()
 {
-    #region Private props and constructor
+    #region Properties and constructor
 
     private DataCacheSettings Settings { get; set; }
     private Func<Task<TData>> LoadData { get; set; }
@@ -18,10 +18,10 @@ public class DataCache<TData>
     private string SerializedDataFileName { get; }
     private string Temporary_SerializedDataFileName { get; }
 
-    public DataCache(DataCacheSettings p_Settings, Func<Task<TData>> p_LoadData)
+    public DataCache(DataCacheSettings settings, Func<Task<TData>> loadData)
     {
-        Settings = p_Settings;
-        LoadData = p_LoadData;
+        Settings = settings;
+        LoadData = loadData;
 
         string dataType = typeof(TData).ToString();
 
@@ -29,7 +29,7 @@ public class DataCache<TData>
 
         string fileName = $"{dataType.Replace(".", "_")}.bin";
 
-        SerializedDataFileName = Path.Combine(p_Settings.SerializedDataSavePath, fileName);
+        SerializedDataFileName = Path.Combine(settings.SerializedDataSavePath, fileName);
         Temporary_SerializedDataFileName = Path.Combine(Settings.SerializedDataSavePath, $"TEMP_{fileName}");
     }
 
@@ -48,16 +48,25 @@ public class DataCache<TData>
     {
         public TData Data { get; set; } = new TData();
         public DateTime ReloadByUtc { get; set; } = DateTime.UtcNow;
-        public int DataModelVersionNr { get; set; } = 1;
     }
 
     #endregion
 
     #region Public access
 
+    /// <summary>
+    /// The cached data model as provided by the LoadData() call.
+    /// </summary>
     public TData Data => Tracker.Data;
+
+    /// <summary>
+    /// True once the first first LoadData() call has completed.
+    /// </summary>
     public bool IsActive => Status == CacheStatus.Active;
 
+    /// <summary>
+    /// Starts the cache as a background task, but awaits the first LoadData() call.
+    /// </summary>
     public async Task Start()
     {
         if (Status == CacheStatus.NotStarted)
@@ -75,12 +84,9 @@ public class DataCache<TData>
         }
     }
 
-    public async Task StartWithoutSerialization()
-    {
-        SerializationEnabled = false;
-        await Start();
-    }
-
+    /// <summary>
+    /// Trigger a LoadData() call in the backround thread and await completion.
+    /// </summary>
     public async Task Reload()
     {
         DateTime loadingStartedUtc = DateTime.UtcNow;
@@ -89,6 +95,9 @@ public class DataCache<TData>
         await VerifyLoadDataSuccessOrTimeout(loadingStartedUtc, nameof(Reload));
     }
 
+    /// <summary>
+    /// Trigger a LoadData() call in the backround thread (without awaiting).
+    /// </summary>
     public void RequestBackgroundReload()
     {
         Tracker.ReloadByUtc = DateTime.UtcNow;
@@ -98,12 +107,12 @@ public class DataCache<TData>
 
     #region VerifyLoadDataSuccessOrTimeout
 
-    private async Task VerifyLoadDataSuccessOrTimeout(DateTime p_LoadingStartedUtc, string p_FunctionName)
+    private async Task VerifyLoadDataSuccessOrTimeout(DateTime loadingStartedUtc, string functionName)
     {
         int totalDelayMs = 0;
 
         while (
-            Tracker.ReloadByUtc <= p_LoadingStartedUtc
+            Tracker.ReloadByUtc <= loadingStartedUtc
             && totalDelayMs < Settings.DataLoadingTimeout.TotalMilliseconds
         )
         {
@@ -111,9 +120,9 @@ public class DataCache<TData>
             totalDelayMs += MinDelayMs_100;
         }
 
-        if (Tracker.ReloadByUtc <= p_LoadingStartedUtc)
+        if (Tracker.ReloadByUtc <= loadingStartedUtc)
         {
-            await LogError($"Timeout of {p_FunctionName}: Cache failed to load data in {Settings.DataLoadingTimeout.TotalSeconds} sec");
+            await LogError($"Timeout of {functionName}: Cache failed to load data in {Settings.DataLoadingTimeout.TotalSeconds} sec");
         }
     }
 
@@ -165,7 +174,6 @@ public class DataCache<TData>
         {
             Data = newData,
             ReloadByUtc = DateTime.UtcNow + Settings.ReloadInterval,
-            DataModelVersionNr = Settings.DataModelVersionNr,
         };
 
         if (Status == CacheStatus.FirstTimeLoading)
@@ -225,7 +233,6 @@ public class DataCache<TData>
 
                 if (
                     loadedTracker != null
-                    && loadedTracker.DataModelVersionNr == Settings.DataModelVersionNr // Model structure ok
                     && loadedTracker.ReloadByUtc > minReloadByUtc // Model age ok
                 )
                 {
@@ -279,54 +286,8 @@ public class DataCache<TData>
                 await Settings.LogError($"Cache ERROR: {MessageHeader}{error}");
             }
         }
-        catch { /* Provided error logger failed... nothing we can do here */ }
+        catch { /* We have caught an error and LogError failed, nothing we can do here */ }
     }
 
     #endregion
 }
-
-#region DataCacheSettings
-
-public class DataCacheSettings
-{
-    /// <summary>
-    /// Interval between await LoadData() calls.
-    /// Default: 60 min.
-    /// </summary>
-    public TimeSpan ReloadInterval { get; set; } = TimeSpan.FromMinutes(60);
-
-    /// <summary>
-    /// If this timeout is reached the cache will stop waiting for LoadData() and log an error instead.
-    /// Default: 15 min.
-    /// </summary>
-    public TimeSpan DataLoadingTimeout { get; set; } = TimeSpan.FromMinutes(15);
-
-    /// <summary>
-    /// When up ticked the cache will reject the current serialized model and refresh instead.
-    /// </summary>
-    public int DataModelVersionNr { get; set; } = 1;
-
-    /// <summary>
-    /// Path where the cache can store a serialized file copy of the latest data.
-    /// Default: no serialization (empty string).
-    /// </summary>
-    public string SerializedDataSavePath { get; set; } = "";
-
-    /// <summary>
-    /// How long the serialized data is considered valied to load at startup.
-    /// Default: 1 day.
-    /// </summary>
-    public TimeSpan SerializedFileMaxAge { get; set; } = TimeSpan.FromDays(1);
-
-    /// <summary>
-    /// Custom error logger. Default: inactive.
-    /// </summary>
-    public Func<string, Task>? LogError { get; set; } = null;
-
-    /// <summary>
-    /// Friendly startup info logs. Default: inactive.
-    /// </summary>
-    public Func<string, Task>? LogStartup { get; set; } = null;
-}
-
-#endregion
